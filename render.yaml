@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: health-agent-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn health_agent_app:app --host 0.0.0.0 --port 10000
+    healthCheckPath: /health
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false                   
+      - key: LANGSMITH_API_KEY
+        sync: false                   
+      - key: LANGSMITH_PROJECT
+        value: week16-health-agent
+      - key: LANGCHAIN_TRACING_V2
+        value: true

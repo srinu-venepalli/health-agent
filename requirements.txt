@@ -1,0 +1,12 @@
+# Verified working together on Python 3.10
+# Run:  pip install -r requirements.txt
+openai==1.109.1
+langchain==0.3.14
+langchain-openai==0.2.14
+langchain-core==0.3.29
+fastapi==0.136.1
+uvicorn==0.47.0
+pyngrok==8.1.2
+python-dotenv==1.2.2
+requests==2.33.1
+pydantic==2.13.4
