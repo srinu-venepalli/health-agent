@@ -1,9 +1,8 @@
 # ============================================================
 #  Healthy Habits Agent
-#  Stack : FastAPI + Uvicorn + ngrok + LangChain + gpt-4o-mini
+#  Stack : FastAPI + Uvicorn + LangChain + gpt-4o-mini
 #  Tools : BMI Calculator, Calorie/TDEE Estimator,
 #          Ideal Weight Calculator, Water Intake Recommender
-#  Tests : Automated HTTP tests that run after server starts
 #
 #  INSTALL (run once before starting):
 #  pip install -r requirements.txt
@@ -13,16 +12,12 @@
 import os
 import sys
 import math
-import time
-import threading
 
 # --------------- third-party --------------------
-import requests
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from pyngrok import ngrok, conf as ngrok_conf
 
 from langchain_openai import ChatOpenAI
 from langchain.agents import AgentExecutor, create_openai_tools_agent
@@ -35,13 +30,10 @@ from langchain_core.messages import SystemMessage
 # ============================================================
 load_dotenv()
 
-OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY")
-NGROK_AUTH_TOKEN = os.getenv("NGROK_AUTH_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 if not OPENAI_API_KEY:
-    sys.exit("ERROR: OPENAI_API_KEY not found in .env file.")
-if not NGROK_AUTH_TOKEN:
-    sys.exit("ERROR: NGROK_AUTH_TOKEN not found in .env file.")
+    sys.exit("ERROR: OPENAI_API_KEY not found in environment variables.")
 
 # Set via environment so LangChain picks it up without any
 # constructor kwarg — avoids pydantic 'proxies' ValidationError.
@@ -248,13 +240,7 @@ def recommend_water_intake(
 SYSTEM_PROMPT = """
 You are a Healthy Habits Agent — a knowledgeable, friendly assistant
 specialising EXCLUSIVELY in healthy habits, wellness, nutrition,
-physical fitness, sleep, hydration, and general preventive health.
-
-You have access to four tools:
-  * calculate_bmi           - computes BMI and WHO category
-  * estimate_daily_calories - estimates TDEE using Mifflin-St Jeor
-  * calculate_ideal_weight  - ideal weight via four clinical formulas
-  * recommend_water_intake  - daily hydration target
+fitness, hydration, and sleep.
 
 Rules:
 1. ONLY answer questions related to healthy habits, nutrition,
@@ -344,164 +330,9 @@ async def ask_agent(request: QueryRequest):
 
 
 # ============================================================
-# 4.  ngrok tunnel launcher
+# 4.  Entry Point
 # ============================================================
-
-def start_ngrok(port: int) -> str:
-    ngrok_conf.get_default().auth_token = NGROK_AUTH_TOKEN
-    tunnel     = ngrok.connect(port, "http")
-    public_url = tunnel.public_url
-    print(f"\n{'='*55}")
-    print(f"  ngrok public URL : {public_url}")
-    print(f"  Local server     : http://127.0.0.1:{port}")
-    print(f"  Swagger UI       : {public_url}/docs")
-    print(f"{'='*55}\n")
-    return public_url
-
-
-# ============================================================
-# 5.  Automated Test Suite
-# ============================================================
-
-TEST_CASES = [
-    (
-        "BMI calculation for a 30-year-old male",
-        {"question": "Calculate my BMI. I weigh 80 kg, I am 175 cm tall and 30 years old."},
-        "bmi",
-        True,
-    ),
-    (
-        "Calorie estimation - sedentary female",
-        {"question": "Estimate daily calories for a 28-year-old female, 60 kg, 165 cm, sedentary."},
-        "kcal",
-        True,
-    ),
-    (
-        "Ideal weight for a 180 cm male",
-        {"question": "What is the ideal weight for a male who is 180 cm tall?"},
-        "kg",
-        True,
-    ),
-    (
-        "Water intake - very active, hot climate",
-        {"question": "How much water should I drink? I weigh 75 kg, very active, hot climate."},
-        "litre",
-        True,
-    ),
-    (
-        "Out-of-domain - stock market",
-        {"question": "What are the best tech stocks to buy right now?"},
-        "don't know",
-        True,
-    ),
-    (
-        "Out-of-domain - recipe",
-        {"question": "Give me a chocolate cake recipe."},
-        "don't know",
-        True,
-    ),
-    (
-        "In-domain - sleep hours",
-        {"question": "How many hours of sleep does an adult need per night?"},
-        "",
-        True,
-    ),
-    (
-        "Empty question - expect HTTP 400",
-        {"question": ""},
-        "400",
-        False,
-    ),
-]
-
-
-def run_tests(base_url: str):
-    print("\n" + "="*55)
-    print("  Running Automated Test Suite")
-    print("="*55)
-
-    passed = 0
-    failed = 0
-
-    for idx, (desc, payload, expected, should_pass) in enumerate(TEST_CASES, 1):
-        print(f"\n[Test {idx}] {desc}")
-        print(f"  Question : {payload['question'] or '(empty)'}")
-        try:
-            resp = requests.post(
-                f"{base_url}/ask",
-                json=payload,
-                timeout=60,
-            )
-            if should_pass:
-                if resp.status_code == 200:
-                    answer = resp.json().get("answer", "")
-                    if expected == "" or expected.lower() in answer.lower():
-                        print(f"  PASSED  | Answer snippet: {answer[:120]}")
-                        passed += 1
-                    else:
-                        print(f"  FAILED  | Expected '{expected}' in answer.")
-                        print(f"           | Got: {answer[:200]}")
-                        failed += 1
-                else:
-                    print(f"  FAILED  | HTTP {resp.status_code}: {resp.text[:200]}")
-                    failed += 1
-            else:
-                if resp.status_code >= 400:
-                    print(f"  PASSED  | Expected error, got HTTP {resp.status_code}")
-                    passed += 1
-                else:
-                    print(f"  FAILED  | Expected error but got HTTP {resp.status_code}")
-                    failed += 1
-        except requests.exceptions.RequestException as exc:
-            print(f"  ERROR   | {exc}")
-            failed += 1
-
-    print("\n" + "="*55)
-    print(f"  Results : {passed} passed, {failed} failed out of {len(TEST_CASES)} tests")
-    print("="*55 + "\n")
-
-
-# ============================================================
-# 6.  Entry Point
-# ============================================================
-
-PORT = 8000
-
-
-class ServerThread(threading.Thread):
-    def __init__(self, port: int):
-        super().__init__(daemon=True)
-        self.port = port
-
-    def run(self):
-        uvicorn.run(app, host="0.0.0.0", port=self.port, log_level="warning")
-
 
 if __name__ == "__main__":
-    print("\nStarting Healthy Habits Agent server ...")
-    server_thread = ServerThread(PORT)
-    server_thread.start()
-    time.sleep(2)
-
-    public_url = start_ngrok(PORT)
-
-    local_url = f"http://127.0.0.1:{PORT}"
-    print("Waiting 3 s for agent to warm up ...")
-    time.sleep(3)
-
-    test_thread = threading.Thread(target=run_tests, args=(local_url,), daemon=True)
-    test_thread.start()
-    test_thread.join()
-
-    print("Server is still running. Press Ctrl+C to stop.\n")
-    print(f"  Public URL   : {public_url}/ask")
-    print(f"  Swagger docs : {public_url}/docs\n")
-
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\nShutting down ...")
-        ngrok.disconnect(public_url)
-        ngrok.kill()
-        sys.exit(0)
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
